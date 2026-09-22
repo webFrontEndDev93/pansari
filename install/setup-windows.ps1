@@ -1,0 +1,85 @@
+# Sets Pansari up on a Windows shop computer: checks Node, puts a Pansari icon
+# on the desktop, and offers to start it automatically when Windows starts.
+#
+#   Right-click this file -> "Run with PowerShell"
+$ErrorActionPreference = 'Stop'
+
+$AppDir   = Split-Path -Parent $PSScriptRoot
+$Launcher = Join-Path $PSScriptRoot 'Pansari.vbs'
+$IconPath = Join-Path $PSScriptRoot 'Pansari.ico'
+$Desktop  = [Environment]::GetFolderPath('Desktop')
+
+Write-Host ''
+Write-Host '  Setting up Pansari...' -ForegroundColor Cyan
+Write-Host ''
+
+# --- 1. Node -----------------------------------------------------------------
+# Node is installed on this computer separately, never shipped with Pansari.
+$node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $node) {
+  Write-Host '  Node.js is not installed.' -ForegroundColor Yellow
+  Write-Host '  Install the LTS version from https://nodejs.org, then run this again.'
+  Write-Host ''
+  Start-Process 'https://nodejs.org'
+  Read-Host '  Press Enter to close'
+  exit 1
+}
+
+# Read the version with a bare flag and split it here. Passing a JS snippet
+# like 'x.split(".")[0]' does not survive: PowerShell strips the inner quotes
+# on its way to a native command, so node receives split(.) and dies — which
+# then read as "your Node is too old" for a perfectly good Node.
+$reported = (& node -v) 2>$null
+$major = 0
+if ($reported -match '^v?(\d+)\.') { $major = [int]$Matches[1] }
+
+if ($major -gt 0 -and $major -lt 20) {
+  Write-Host "  Pansari needs Node 20 or newer; this computer has $reported." -ForegroundColor Yellow
+  Write-Host '  Update it from https://nodejs.org, then run this again.'
+  Read-Host '  Press Enter to close'
+  exit 1
+}
+if ($major -eq 0) {
+  # Could not read it; the server checks again at startup and says so clearly.
+  Write-Host '  Node found (version could not be read).' -ForegroundColor Green
+}
+else {
+  Write-Host "  Node $reported found." -ForegroundColor Green
+}
+
+# --- 2. Desktop shortcut -----------------------------------------------------
+$shell    = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut((Join-Path $Desktop 'Pansari.lnk'))
+$shortcut.TargetPath       = 'wscript.exe'
+$shortcut.Arguments        = """$Launcher"""
+$shortcut.WorkingDirectory = $AppDir
+$shortcut.IconLocation     = $IconPath
+$shortcut.Description      = 'Open the Pansari till'
+$shortcut.Save()
+Write-Host '  Put a Pansari icon on the desktop.' -ForegroundColor Green
+
+# Pin it to the Start menu too, so it survives a tidied desktop.
+$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+Copy-Item (Join-Path $Desktop 'Pansari.lnk') (Join-Path $startMenu 'Pansari.lnk') -Force
+Write-Host '  Added it to the Start menu.' -ForegroundColor Green
+
+# --- 3. Start with Windows (optional) ---------------------------------------
+Write-Host ''
+$auto = Read-Host '  Start Pansari automatically when this computer turns on? (Y/n)'
+if ($auto -eq '' -or $auto -match '^[Yy]') {
+  $startup = [Environment]::GetFolderPath('Startup')
+  $boot = $shell.CreateShortcut((Join-Path $startup 'Pansari.lnk'))
+  $boot.TargetPath       = 'wscript.exe'
+  $boot.Arguments        = """$Launcher"""
+  $boot.WorkingDirectory = $AppDir
+  $boot.IconLocation     = $IconPath
+  $boot.Save()
+  Write-Host '  It will now open by itself when the computer starts.' -ForegroundColor Green
+} else {
+  Write-Host '  Skipped. Staff can open it from the desktop icon.'
+}
+
+Write-Host ''
+Write-Host '  Done. Double-click the Pansari icon on the desktop.' -ForegroundColor Cyan
+Write-Host ''
+Read-Host '  Press Enter to close'
