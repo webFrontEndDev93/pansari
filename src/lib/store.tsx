@@ -4,6 +4,7 @@ import {
 import { api, ApiError, setUnauthenticatedHandler, type Role } from './api';
 import { setCurrencySymbol } from './format';
 import type { Alerts, Batch, Bootstrap, Customer, Product, Sale, Settings } from './types';
+import { setUnitTable } from './units';
 
 export type Theme = 'light' | 'dark';
 export type ToastTone = 'success' | 'error' | 'warning' | 'info';
@@ -110,6 +111,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [notify]);
 
   const applyBootstrap = useCallback((data: Bootstrap) => {
+    // Installed before any state that components read, so nothing ever renders
+    // a quantity without knowing whether its unit is weighed.
+    setUnitTable(data.units ?? {});
     setSettings(data.settings);
     setCurrencySymbol(data.settings.currencySymbol);
     setProducts(data.products);
@@ -273,17 +277,42 @@ export function useStore() {
   return store;
 }
 
-/** Live stock for a product across every sellable (unexpired, in-stock) batch. */
+/**
+ * Whether a lot can still be sold.
+ *
+ * The blank check is the whole point. Most grocery stock has no expiry date at
+ * all — a sack of atta, a bag of daal — and a plain `b.expiry >= today` reads
+ * '' as less than today's date and quietly hides every loose item in the shop
+ * as though it had expired. This mirrors the server's rule: no date means
+ * nothing to expire.
+ */
+export const lotExpired = (b: Batch, today: string) => Boolean(b.expiry) && b.expiry < today;
+
+const sellable = (b: Batch, today: string) => b.quantity > 0 && !lotExpired(b, today);
+
+/** Live stock for a product across every sellable lot. */
 export function stockFor(batches: Batch[], productId: string, today: string) {
-  return batches.reduce(
-    (sum, b) => (b.productId === productId && b.quantity > 0 && b.expiry >= today ? sum + b.quantity : sum),
+  const total = batches.reduce(
+    (sum, b) => (b.productId === productId && sellable(b, today) ? sum + b.quantity : sum),
     0,
   );
+  // Weighed stock is fractional, so the running sum picks up floating-point
+  // dust. Rounded here rather than at each display site.
+  return Math.round((total + Number.EPSILON) * 1000) / 1000;
 }
 
-/** Sellable batches for a product, nearest expiry first so old stock moves first. */
+/**
+ * Sellable lots, nearest expiry first so dated stock moves first.
+ *
+ * Undated lots sort last rather than first: a dated lot is the one with a
+ * deadline, so it should leave the shelf before the sack that has none.
+ */
 export function batchesFor(batches: Batch[], productId: string, today: string) {
   return batches
-    .filter((b) => b.productId === productId && b.quantity > 0 && b.expiry >= today)
-    .sort((a, b) => a.expiry.localeCompare(b.expiry));
+    .filter((b) => b.productId === productId && sellable(b, today))
+    .sort((a, b) => {
+      if (Boolean(a.expiry) !== Boolean(b.expiry)) return a.expiry ? -1 : 1;
+      if (!a.expiry) return (a.receivedAt || '').localeCompare(b.receivedAt || '');
+      return a.expiry.localeCompare(b.expiry);
+    });
 }

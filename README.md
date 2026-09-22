@@ -1,36 +1,45 @@
 # Pansari
 
-A lightweight, offline-first point of sale for a medicine shop. Fast keyboard-driven
-billing, batch and expiry tracking, customer udhaar, and a reports dashboard — all
-running on one machine with no internet connection and no database server.
+A lightweight, offline-first point of sale for a Pakistani karyana shop. Fast
+keyboard-driven billing that handles loose goods by weight, stock and expiry tracking,
+customer udhaar, and a reports dashboard — all running on one machine with no internet
+connection and no database server.
 
-![The billing counter](docs/screens/billing.png)
+Sibling product to **Dawakhana**, the pharmacy till. Same architecture, separate
+product.
 
 ## Why it is built this way
 
-A pharmacy counter has particular needs that a generic POS gets wrong:
+A karyana counter has particular needs that a generic POS gets wrong:
 
-- **Stock lives on batches, not products.** The same medicine arrives in batches with
-  different expiry dates, MRPs and purchase costs. Pansari tracks every batch
-  separately and defaults each sale to the batch expiring soonest (FEFO), so old stock
-  clears before it lapses.
-- **Expired medicine must not be sellable.** Expired batches are hidden from the till
-  and rejected by the server even if a stale browser tab tries to bill one.
-- **Prescription-only medicine needs a paper trail.** Adding an Rx item to a bill makes
-  the prescription reference mandatory before payment can be taken.
-- **Prices are tax-inclusive.** MRP is printed on the pack, so sales tax is
-  *back-calculated* out of the line total rather than added on top, and appears as a
-  single line — Pakistan levies one federal sales tax, not a split.
-- **The tax rate belongs to the product.** Drugs registered under the Drugs Act 1976
-  attract a concessional rate, while devices, cosmetics and general consumables sit at
-  the standard rate, so a single shop-wide rate would be wrong. The starting catalogue ships
-  registered medicines at 1% and non-drug lines at 18%.
+- **Most of what it sells is loose.** Atta, rice, sugar, daal, spices and vegetables
+  come out of a sack and onto a scale. Pansari prices those per kilo or per litre and
+  bills them in fractions, so 750 g of atta at Rs 132/kg is one line worth Rs 99 —
+  not a calculator on the counter and a number typed in by hand.
+- **Weights are entered the way they are read.** The till asks for grams, because that
+  is the number on the scale and the number the customer said. One-tap keys cover 250 g,
+  500 g, 1 kg and 5 kg; anything else is typed. The bill prints `750 g`, not `0.75`.
+- **Counted goods stay counted.** Packets, dozens and bottles get a +/- stepper and
+  whole numbers. Nothing lets someone sell 2.4 packets of biscuits.
+- **Half the shelf has no expiry date, no batch number and no printed MRP.** A sack of
+  rice has none of the three. All three are optional, and the receipt leaves out what
+  does not exist rather than printing an empty field.
+- **Dated stock still moves first.** Where an expiry does exist the till defaults to
+  the nearest-dated lot (FEFO), and expired stock is hidden from the counter and
+  rejected by the server even if a stale browser tab tries to bill it.
+- **Staff search in Urdu.** Every item carries an Urdu name, searchable alongside the
+  English one and the barcode, because that is how the person at the counter thinks.
+- **Prices are tax-inclusive.** Sales tax is *back-calculated* out of the line total
+  rather than added on top, and appears as a single line — Pakistan levies one federal
+  sales tax, not a split.
+- **The tax rate belongs to the item.** Unprocessed food is generally exempt while
+  packaged branded goods generally are not, so a single shop-wide rate would be wrong.
+  Rates move with each Finance Act, so the list is editable from Settings.
 - **Regulars buy on udhaar.** Bills can be part-paid or fully deferred to a customer's
   account, with a ledger and settlement flow.
 - **Money is in Pakistani rupees**, formatted `Rs 1,842,424.50`. Four tenders are
   supported: Cash, Credit/Debit Card, Digital (EasyPaisa, JazzCash, QR or bank
-  transfer), and Udhaar. Change the symbol from Settings if you need another
-  currency — a word-like symbol gets its spacing automatically.
+  transfer), and Udhaar.
 
 ## Putting it on a shop computer
 
@@ -54,15 +63,15 @@ npm run build     # compile the frontend into dist/
 npm start         # serve the app and API on http://localhost:4173
 ```
 
-The first run writes a **starter catalogue**: 50 medicines from a Pakistani shelf
-(Panadol, Augmentin, Risek, Ventolin, Surbex Z and so on), each priced, each with one
-batch marked `OPENING` that holds no stock. No customers, no bills, no takings — a real
+The first run writes a **starter catalogue**: 65 items from a Pakistani karyana shelf —
+atta, chawal, daal, cheeni, masalay, fresh produce, dairy, Tapal, Shan, Surf Excel and
+so on — each priced, each with one empty stock lot. Roughly half are sold by weight. No customers, no bills, no takings — a real
 shop's records belong to that shop. Nothing is sellable until someone enters what is on
 the shelf, which is deliberate: a till that ships with invented stock counts is worse
 than one that ships with none.
 
 For looking around the app rather than opening a shop, `npm run seed:demo` replaces that
-with a shop mid-life — stocked batches, 12 customers and about three months of trade, so
+with a shop mid-life — stocked lots, regular customers and two months of trade, so
 the reports and alerts have something to show. Every number in it is invented; never
 hand it to a shop. Delete `server/data/db.json` and restart to go back to the starter
 catalogue, or run `npm run seed` to reset it.
@@ -96,45 +105,38 @@ operator should never have to reach for the mouse mid-queue:
 | Key | Action |
 | --- | --- |
 | `F1` – `F5` | Jump between Billing, Inventory, Customers, Reports, Settings |
-| `/` or `Ctrl`+`K` | Focus the medicine search |
-| `↑` `↓` then `Enter` | Pick a medicine from the results |
+| `/` or `Ctrl`+`K` | Focus the item search |
+| `↑` `↓` then `Enter` | Pick an item from the results |
 | `F9` | Take payment for the open bill |
 | `F8` | Clear the open bill |
 | `Esc` | Close a dialog, or clear the search |
 
-Search matches on brand name, generic name (salt), manufacturer and barcode, and
-tolerates loose typing — `azith` finds *Azithral 500*. A barcode scanner works with no
-extra setup: it types the code and presses Enter, which is exactly the flow above.
+Search matches on item name, Urdu name, brand and barcode, and tolerates loose typing —
+`chwl` finds *Chawal Super Kernel Basmati*, and `آٹا` finds the atta. A barcode scanner
+works with no extra setup: it types the code and presses Enter, which is exactly the
+flow above.
 
 ### Screens
 
-**Billing** — search, cart with per-line discounts, batch override, customer attach,
-cash/card/digital/udhaar tender with change calculation, and a printable 80mm receipt.
-Expiry warnings appear on the line itself, so a short-dated pack is never sold by
-accident.
+**Billing** — search, a cart that switches between a weight pad and a piece stepper per
+line, per-line discounts, lot override, customer attach, cash/card/digital/udhaar tender
+with change calculation, and a printable 80mm receipt. Where an item has an expiry, the
+warning appears on the line itself, so short-dated stock is never sold by accident.
 
-**Inventory** — medicines with expandable batch lists, stock value, and one-click
-filters for low stock, expiring soon, expired and out of stock.
+**Inventory** — items with expandable stock-lot lists, stock shown in each item's own
+unit, stock value, and one-click filters for low stock, expiring soon, expired and out
+of stock.
 
-![Inventory](docs/screens/inventory.png)
-
-**Customers** — purchase history, prescription references, udhaar balance and
-settlement.
-
-![Customers](docs/screens/customers.png)
+**Customers** — purchase history, udhaar balance and settlement.
 
 **Reports** — revenue and profit over time, best sellers, payment mix, busiest hours,
 a reorder list, and a searchable bill register with CSV export and bill cancellation
 (which returns stock and reverses any udhaar).
 
-![Reports](docs/screens/reports.png)
-
 **Settings** — shop identity for the receipt, billing behaviour, and backup/restore.
 
 Light and dark are both first-class; the theme follows the system by default and is
 remembered per device.
-
-![Billing in dark mode](docs/screens/billing-dark.png)
 
 ## How it is put together
 
@@ -184,10 +186,8 @@ are — so every bill records who rang it up. Each person is an **owner** or on 
 | **Cancel a bill** | yes | **no** |
 | See takings, profit and best-sellers | yes | no |
 | Add stock, change a price or a tax rate | yes | no |
-| Delete a medicine, batch or customer | yes | no |
+| Delete an item, stock lot or customer | yes | no |
 | Open Settings, backups, manage people | yes | no |
-
-![Setting up the till](docs/screens/passcode.png)
 
 Add and remove people in **Settings → People on the till**. Two people can never share
 a passcode — the till would not be able to tell them apart, so it refuses. The shop
@@ -207,15 +207,11 @@ rang up keep their name, because an audit trail that changes retroactively is no
   payments taken, and people added or removed. It is searchable and travels with your
   backups.
 
-![The activity log](docs/screens/activity.png)
-
 ### Manager override
 
 Staff are not left at a dead end. When the counter hits something owner-only, Pansari
 asks for an **owner passcode** right there; the owner walks over, types it, and the
 action goes through. Nobody signs out mid-queue.
-
-![Asking for the owner passcode](docs/screens/override.png)
 
 The override lasts five minutes and shows in the sidebar — naming the owner who
 approved it, with a countdown that doubles as a button to end it early. It lifts *that
@@ -247,8 +243,6 @@ machine alone.
 
 ## Backups
 
-![Automatic backups in Settings](docs/screens/backups.png)
-
 **Settings → Automatic backups.** A dated copy is written when Pansari starts and then
 on a schedule you set, with old copies pruned to a limit.
 
@@ -277,42 +271,45 @@ previous state first.
 ## Sales tax
 
 Bills show one **Sales tax** line, back-calculated out of the tax-inclusive MRP. The
-rate is set per product (Inventory → edit a medicine → Sales tax rate).
+rate is set per item (Inventory → edit an item → Sales tax rate).
 
 **Nothing about tax is hardcoded.** Settings → Billing behaviour holds both:
 
-- **The rate list** — the options offered when editing a medicine. Add, remove or
+- **The rate list** — the options offered when editing an item. Add, remove or
   relabel rows as your position changes. Saving tidies the list: rates are clamped to
-  0–100%, duplicates collapse and rows sort by rate. A rate already used by a medicine
+  0–100%, duplicates collapse and rows sort by rate. A rate already used by an item
   stays selectable even if you delete it here, so removing a row can never silently
   re-tax stock you have already priced.
-- **The default rate** applied to a newly added medicine until you give it its own.
-
-![Sales tax rates in Settings](docs/screens/tax-rates.png)
+- **The default rate** applied to a newly added item until you give it its own.
 
 A new shop starts with three rows and a **0% default**:
 
 | Rate | For |
 | --- | --- |
-| `0%` | Exempt, or tax already discharged upstream and not shown again |
-| `1%` | Drugs registered under the Drugs Act 1976 — the concessional rate |
-| `18%` | Standard rate: devices, cosmetics, general consumables |
+| `0%` | Exempt — unprocessed food, and anything your shop is not registered to charge on |
+| `18%` | Standard rate: packaged and branded goods, household and personal care |
 
-A caveat worth reading before you trade on this. Pakistan charges DRAP-registered
-allopathic medicines a concessional **1%** under Entry 81 of Table-I of the Eighth
-Schedule to the Sales Tax Act 1990, and that tax is treated as a **final discharge in
-the supply chain** — collected by the manufacturer or importer, with no input-tax
-adjustment further down. So a retail chemist is often not adding output tax on those
-lines at all, and `0%` may represent your position better than `1%`. Non-drug goods
-carry the standard 18%.
+A caveat worth reading before you trade on this. Under the Sixth Schedule to the Sales
+Tax Act 1990 a large part of a karyana shelf is **exempt**: vegetables, fruit, pulses,
+cereals and products of the milling industry, meat, fish, eggs, milk, yoghurt, butter,
+salt, potato, onions, bread, nan, chapatti and rusk among them. Packaged and branded
+groceries generally are not, and sit at the standard rate.
 
-These rates move with every Finance Act, and there have been active budget proposals
-to zero-rate registered pharmaceuticals. **Confirm your own position with your tax
-adviser and set the rates accordingly** — the app makes both the list and the default
-editable precisely because they are not ours to assume. The default ships at 0% for
-that reason. Enter your NTN and STRN in Settings; each is
-omitted from the receipt while blank rather than printing something false.
+Separately, a retailer whose turnover over the last twelve months is below the
+registration threshold is not required to register for or charge sales tax at all — in
+which case `0%` across the board is your position, not `18%` on half the shelf.
 
-Sources: [FBR clarification on the 1% rate](https://www.brecorder.com/news/40209257),
-[sales tax structure for pharmaceuticals](https://www.brecorder.com/news/40247020),
-[tax rules for a pharmacy business](https://sohaibnsultan.pk/tax-laws-applying-to-a-pharmacy-business-in-pakistan-a-complete-guide-for-2026/).
+These rates and thresholds move with every Finance Act. **Confirm your own position
+with your tax adviser and set the rates accordingly** — the app makes both the list and
+the default editable precisely because they are not ours to assume, and the default
+ships at 0% for that reason. Enter your NTN and STRN in Settings; each is omitted from
+the receipt while blank rather than printing something false.
+
+The starting catalogue follows the same split — loose staples, pulses, spices and fresh
+produce at 0%, packaged and branded lines at 18% — as a starting point to correct, not
+a ruling.
+
+Sources: [FBR on sales tax basics and exempt
+goods](https://www.fbr.gov.pk/sales-tax-basics/51148/101149), [the Sixth Schedule
+exemption list](https://conseric.pk/sixth-schedule-goods-sales-tax-2024-25/), [current
+GST exemption updates](https://conseric.pk/exempted-goods-sales-tax-2025-26/).

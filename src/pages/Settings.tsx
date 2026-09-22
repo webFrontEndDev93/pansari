@@ -191,14 +191,6 @@ export function SettingsPage() {
               <Field label="STRN" hint="Sales Tax Registration Number, if you are registered.">
                 <input className="input mono" value={draft.strn ?? ''} onChange={(e) => set('strn', e.target.value)} />
               </Field>
-              <Field label="Drug licence number">
-                <input className="input mono" value={draft.drugLicense ?? ''} onChange={(e) => set('drugLicense', e.target.value)} />
-              </Field>
-              <div className="span-2">
-                <Field label="Registered pharmacist" hint="Shown at the bottom of the bill.">
-                  <input className="input" value={draft.pharmacist ?? ''} onChange={(e) => set('pharmacist', e.target.value)} />
-                </Field>
-              </div>
               <div className="span-2">
                 <Field label="Receipt footer note">
                   <textarea className="textarea" value={draft.footerNote ?? ''} onChange={(e) => set('footerNote', e.target.value)} />
@@ -230,14 +222,14 @@ export function SettingsPage() {
               <Field label="Currency symbol" hint="Shown before every amount. A word like “Rs” gets a space automatically.">
                 <input className="input" value={draft.currencySymbol ?? ''} onChange={(e) => set('currencySymbol', e.target.value)} />
               </Field>
-              <Field label="Low stock threshold" hint="Used when a medicine has no reorder level of its own.">
+              <Field label="Low stock threshold" hint="Used when an item has no reorder level of its own.">
                 <input
                   className="input input--num" type="number" min={0}
                   value={draft.lowStockThreshold ?? 20}
                   onChange={(e) => set('lowStockThreshold', Number(e.target.value))}
                 />
               </Field>
-              <Field label="Expiry warning window (days)" hint="Batches inside this window show up as expiring soon.">
+              <Field label="Expiry warning window (days)" hint="Lots inside this window show up as expiring soon.">
                 <input
                   className="input input--num" type="number" min={1}
                   value={draft.expiryAlertDays ?? 90}
@@ -246,7 +238,7 @@ export function SettingsPage() {
               </Field>
               <Field
                 label="Default sales tax rate (%)"
-                hint="Applied to a new medicine until you set its own rate."
+                hint="Applied to a new item until you set its own rate."
               >
                 <input
                   className="input input--num" type="number" min={0} max={100} step="0.5"
@@ -261,7 +253,7 @@ export function SettingsPage() {
                 <div>
                   <div className="setting-name">Sales tax rates</div>
                   <div className="setting-desc">
-                    The rates you can pick from when editing a medicine. Rates move with each
+                    The rates you can pick from when editing an item. Rates move with each
                     Finance Act, so this list is yours to change — confirm your position with
                     your tax adviser.
                   </div>
@@ -318,7 +310,7 @@ export function SettingsPage() {
 
               <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
                 Saving tidies the list: rates are clamped to 0–100%, duplicates collapse and
-                rows are sorted. A rate already used by a medicine is kept selectable even if
+                rows are sorted. A rate already used by an item is kept selectable even if
                 you remove it here.
               </p>
             </div>
@@ -350,7 +342,7 @@ export function SettingsPage() {
           </div>
           <div className="card-body">
             <div className="stat-grid" style={{ marginBottom: 'var(--space-5)' }}>
-              <Stat label="Medicines" value={products.length} foot={`${liveBatches} batches in stock`} tone="brand" icon="pill" />
+              <Stat label="Items" value={products.length} foot={`${liveBatches} lots in stock`} tone="brand" icon="basket" />
               <Stat label="Customers" value={customers.length} foot="Including udhaar accounts" tone="info" icon="customers" />
               <Stat label="Recent bills" value={recentSales.length} foot="Last 50 kept in memory" tone="neutral" icon="receipt" />
               <Stat label="Stock value" value={moneyShort(stockValue)} foot="At purchase cost" tone="success" icon="box" />
@@ -360,7 +352,7 @@ export function SettingsPage() {
               <div>
                 <div className="setting-name">Download a backup</div>
                 <div className="setting-desc">
-                  Saves medicines, batches, customers, bills and settings as one JSON file. Do this at the
+                  Saves items, stock lots, customers, bills and settings as one JSON file. Do this at the
                   end of each day and keep the copy off this machine.
                 </div>
               </div>
@@ -629,8 +621,8 @@ export function SettingsPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(16rem, 1fr))', gap: 'var(--space-3)' }}>
               {[
                 ['F1 – F5', 'Jump between screens'],
-                ['/ or Ctrl+K', 'Focus the medicine search'],
-                ['↑ ↓ then Enter', 'Pick a medicine from the results'],
+                ['/ or Ctrl+K', 'Focus the item search'],
+                ['↑ ↓ then Enter', 'Pick an item from the results'],
                 ['F9', 'Take payment for the open bill'],
                 ['F8', 'Clear the open bill'],
                 ['Esc', 'Close a dialog or clear the search'],
@@ -645,7 +637,7 @@ export function SettingsPage() {
         </div>
 
         <p className="muted row" style={{ fontSize: 'var(--text-xs)', gap: 6, justifyContent: 'center', paddingBottom: 'var(--space-5)' }}>
-          <Icon name="pill" size={13} />
+          <Icon name="basket" size={13} />
           Pansari · runs entirely on this machine · no internet needed
         </p>
       </div>

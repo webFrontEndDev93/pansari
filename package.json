@@ -17,6 +17,7 @@
     "seed": "node server/seed.mjs --force",
     "seed:demo": "node server/seed.mjs --force --demo",
     "typecheck": "tsc -b --noEmit",
+    "test": "node --test server/*.test.mjs",
     "package": "node scripts/package.mjs"
   },
   "dependencies": {

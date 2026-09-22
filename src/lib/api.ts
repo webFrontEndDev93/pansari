@@ -54,8 +54,6 @@ export interface CheckoutPayload {
   paid: number;
   customerId: string | null;
   customerName: string;
-  doctorName: string;
-  prescriptionRef: string;
   note: string;
 }
 

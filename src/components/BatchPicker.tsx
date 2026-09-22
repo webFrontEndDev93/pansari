@@ -3,7 +3,7 @@ import { expiryLabel, formatDate, money, todayISO } from '../lib/format';
 import type { Batch, Product } from '../lib/types';
 import { Badge, Modal, EmptyState } from './ui';
 
-/** Lets the counter override the default FEFO batch — e.g. the customer wants a longer-dated pack. */
+/** Lets the counter override the default FEFO lot — e.g. the customer wants a longer-dated packet. */
 export function BatchPicker({
   product, currentBatchId, onPick, onClose,
 }: {
@@ -18,7 +18,7 @@ export function BatchPicker({
 
   return (
     <Modal
-      title={`Choose batch — ${product.name}`}
+      title={`Choose stock lot — ${product.name}`}
       subtitle="Nearest expiry is listed first so older stock clears before it lapses."
       width="36rem"
       onClose={onClose}
@@ -27,7 +27,7 @@ export function BatchPicker({
         <EmptyState
           icon="alert"
           title="No sellable batch left"
-          text="Every batch of this medicine is either finished or past its expiry date."
+          text="Every lot of this item is either finished or past its expiry date."
         />
       ) : (
         <div className="table-wrap" style={{ border: '1px solid var(--border)' }}>

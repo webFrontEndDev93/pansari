@@ -379,7 +379,6 @@ export function Reports() {
                         <td className="muted">{formatDateTime(sale.at)}</td>
                         <td>
                           {sale.customerName}
-                          {sale.prescriptionRef && <div className="cell-sub">Rx {sale.prescriptionRef}</div>}
                         </td>
                         <td>
                           {sale.soldBy ?? <span className="muted">—</span>}

@@ -12,8 +12,6 @@ export interface Settings {
   email: string;
   ntn: string;
   strn: string;
-  drugLicense: string;
-  pharmacist: string;
   currency: string;
   currencySymbol: string;
   invoicePrefix: string;
@@ -30,31 +28,36 @@ export interface Settings {
   footerNote: string;
 }
 
+/** Units a shop sells in. `kg` and `litre` are weighed; the rest are counted. */
+export type Unit = 'piece' | 'packet' | 'dozen' | 'kg' | 'litre';
+
 export interface Product {
   id: string;
   name: string;
-  genericName: string;
-  manufacturer: string;
+  /** So staff can search the way they speak. Never printed on the bill. */
+  urduName: string;
+  brand: string;
   category: string;
-  form: string;
-  strength: string;
-  packSize: string;
+  /** What is on the packet — "1 litre", "950 g" — or "Loose" for weighed goods. */
+  size: string;
   hsCode: string;
   taxRate: number;
-  unit: string;
-  rack: string;
+  unit: Unit;
+  aisle: string;
+  /** In the item's own unit, so it may be fractional for anything weighed. */
   reorderLevel: number;
-  prescriptionRequired: boolean;
   barcode: string;
   notes: string;
   createdAt?: string;
 }
 
+/** A stock lot. Batch number, expiry and MRP are all optional — loose goods have none. */
 export interface Batch {
   id: string;
   productId: string;
   batchNo: string;
   expiry: string;
+  /** Zero means no printed price, which is the normal case for loose goods. */
   mrp: number;
   salePrice: number;
   costPrice: number;
@@ -70,7 +73,6 @@ export interface Customer {
   phone: string;
   email: string;
   address: string;
-  doctor: string;
   notes: string;
   creditBalance: number;
   createdAt?: string;
@@ -80,12 +82,14 @@ export interface SaleItem {
   productId: string;
   batchId: string;
   name: string;
-  strength: string;
-  form: string;
+  urduName: string;
+  brand: string;
+  size: string;
   batchNo: string;
   expiry: string;
   hsCode: string;
-  unit: string;
+  unit: Unit;
+  /** Fractional for weighed goods: 0.75 kg of daal is an ordinary line. */
   qty: number;
   mrp: number;
   salePrice: number;
@@ -141,8 +145,6 @@ export interface Sale {
   due: number;
   customerId: string | null;
   customerName: string;
-  doctorName: string;
-  prescriptionRef: string;
   note: string;
   status: 'completed' | 'void';
   /** Who was at the till. Kept as a name so the bill never changes retroactively. */
@@ -193,6 +195,8 @@ export interface Alerts {
 
 export interface Bootstrap {
   settings: Settings;
+  /** The unit table, sent by the server so the frontend keeps no second copy. */
+  units: Record<Unit, { label: string; short: string; weighed: boolean; step: number; quick: number[] }>;
   products: Product[];
   batches: Batch[];
   customers: Customer[];

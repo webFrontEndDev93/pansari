@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { stockFor, useStore } from '../lib/store';
+import { lotExpired, stockFor, useStore } from '../lib/store';
 import { daysUntil, expiryLabel, formatDate, fuzzyScore, money, moneyShort, todayISO } from '../lib/format';
 import type { Batch, Product } from '../lib/types';
 import { Icon } from '../components/Icon';
@@ -9,12 +9,13 @@ import { useAdminAction } from '../components/AdminGate';
 import { ProductForm } from '../components/ProductForm';
 import { BatchForm } from '../components/BatchForm';
 import '../styles/pages.css';
+import { formatQty, isWeighed } from '../lib/units';
 
 type Lens = 'all' | 'low' | 'expiring' | 'expired' | 'out';
 type SortKey = 'name' | 'stock' | 'value' | 'expiry';
 
 const LENS_LABEL: Record<Lens, string> = {
-  all: 'All medicines',
+  all: 'All items',
   low: 'Low stock',
   expiring: 'Expiring soon',
   expired: 'Expired',
@@ -65,9 +66,9 @@ export function Inventory() {
         product,
         batches: own,
         stock: stockFor(batches, product.id, today),
-        expiredQty: live.filter((b) => b.expiry < today).reduce((s, b) => s + b.quantity, 0),
+        expiredQty: live.filter((b) => lotExpired(b, today)).reduce((s, b) => s + b.quantity, 0),
         value: live.reduce((s, b) => s + b.quantity * b.costPrice, 0),
-        nearestExpiry: live.find((b) => b.expiry >= today)?.expiry ?? null,
+        nearestExpiry: live.find((b) => b.expiry && b.expiry >= today)?.expiry ?? null,
       };
     });
 
@@ -83,7 +84,7 @@ export function Inventory() {
       }
 
       if (query.trim()) {
-        const best = [row.product.name, row.product.genericName, row.product.manufacturer, row.product.barcode]
+        const best = [row.product.name, row.product.urduName, row.product.brand, row.product.barcode]
           .filter(Boolean)
           .map((hay) => fuzzyScore(hay, query))
           .filter((score) => score >= 0);
@@ -142,7 +143,7 @@ export function Inventory() {
         <div>
           <h1 className="page-title">Inventory</h1>
           <p className="page-sub">
-            {products.length} medicines · {batches.filter((b) => b.quantity > 0).length} live batches ·{' '}
+            {products.length} items · {batches.filter((b) => b.quantity > 0).length} lots in stock ·{' '}
             {money(stockValue)} at cost
           </p>
         </div>
@@ -150,9 +151,9 @@ export function Inventory() {
           <Button
             icon={isAdmin ? 'plus' : 'shield'}
             variant="primary"
-            onClick={guard('add a medicine', () => setAddingProduct(true))}
+            onClick={guard('add an item', () => setAddingProduct(true))}
           >
-            Add medicine
+            Add item
           </Button>
         </div>
       </div>
@@ -169,7 +170,7 @@ export function Inventory() {
         <Stat
           label={`Expiring in ${settings.expiryAlertDays ?? 90} days`}
           value={alerts.expiringSoon.length}
-          foot="Batches to move or return"
+          foot="Lots to move or return"
           tone={alerts.expiringSoon.length ? 'warning' : 'success'}
           icon="clock"
         />
@@ -195,7 +196,7 @@ export function Inventory() {
               <span className="grow">
                 <span className="alert-count">{alerts.expired.length}</span>
                 <span className="alert-text" style={{ display: 'block' }}>
-                  expired batches still on the shelf — pull them today
+                  expired lots still on the shelf — pull them today
                 </span>
               </span>
             </button>
@@ -211,7 +212,7 @@ export function Inventory() {
               <span className="grow">
                 <span className="alert-count">{alerts.expiringSoon.length}</span>
                 <span className="alert-text" style={{ display: 'block' }}>
-                  batches expiring within {settings.expiryAlertDays ?? 90} days
+                  lots expiring within {settings.expiryAlertDays ?? 30} days
                 </span>
               </span>
             </button>
@@ -227,7 +228,7 @@ export function Inventory() {
               <span className="grow">
                 <span className="alert-count">{alerts.lowStock.length}</span>
                 <span className="alert-text" style={{ display: 'block' }}>
-                  medicines at or below reorder level
+                  items at or below reorder level
                 </span>
               </span>
             </button>
@@ -240,7 +241,7 @@ export function Inventory() {
           <Icon name="search" size={15} />
           <input
             className="input"
-            placeholder="Search medicines…"
+            placeholder="Search items…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -274,7 +275,7 @@ export function Inventory() {
           <EmptyState
             icon="inventory"
             title="Nothing matches those filters"
-            text="Try clearing the search or switching back to all medicines."
+            text="Try clearing the search or switching back to all items."
             action={<Button onClick={() => { setQuery(''); setLens('all'); setCategory('all'); }}>Reset filters</Button>}
           />
         ) : (
@@ -282,7 +283,7 @@ export function Inventory() {
             <table className="data">
               <thead>
                 <tr>
-                  <th style={{ width: '30%' }}>Medicine</th>
+                  <th style={{ width: '30%' }}>Item</th>
                   <th>Category</th>
                   <th className="right">Stock</th>
                   <th>Nearest expiry</th>
@@ -294,7 +295,7 @@ export function Inventory() {
               <tbody>
                 {rows.map((row) => {
                   const low = row.stock > 0 && row.stock <= (row.product.reorderLevel || settings.lowStockThreshold);
-                  const sellable = row.batches.find((b) => b.quantity > 0 && b.expiry >= today);
+                  const sellable = row.batches.find((b) => b.quantity > 0 && !lotExpired(b, today));
                   const open = expanded === row.product.id;
                   const days = row.nearestExpiry ? daysUntil(row.nearestExpiry) : null;
 
@@ -313,30 +314,39 @@ export function Inventory() {
                               <Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
                             </button>
                             <span className="truncate">{row.product.name}</span>
-                            {row.product.strength && row.product.strength !== '—' && (
-                              <span className="muted" style={{ fontWeight: 500, fontSize: 'var(--text-xs)' }}>
-                                {row.product.strength}
+                            {row.product.urduName && (
+                              <span className="muted" style={{ fontWeight: 500, fontSize: 'var(--text-xs)' }} dir="auto">
+                                {row.product.urduName}
                               </span>
                             )}
-                            {row.product.prescriptionRequired && <Badge tone="info">Rx</Badge>}
+                            {isWeighed(row.product.unit) && <Badge tone="brand">Loose</Badge>}
                           </div>
                           <div className="cell-sub" style={{ paddingLeft: '2.4rem' }}>
-                            {row.product.genericName || '—'} · {row.product.manufacturer}
-                            {row.product.rack && ` · Rack ${row.product.rack}`}
+                            {/* "Loose" is already said by the badge beside the
+                                name, so saying it again here is just noise. */}
+                            {[
+                              row.product.brand,
+                              row.product.size === 'Loose' ? '' : row.product.size,
+                              row.product.aisle && `Aisle ${row.product.aisle}`,
+                            ].filter(Boolean).join(' · ') || '—'}
                           </div>
                         </td>
 
                         <td><Badge tone="neutral">{row.product.category}</Badge></td>
 
                         <td className="right">
-                          <div className="num" style={{ fontWeight: 620 }}>{row.stock}</div>
+                          <div className="num" style={{ fontWeight: 620 }}>{formatQty(row.stock, row.product.unit)}</div>
                           <div className="cell-sub">
                             {row.stock === 0 ? (
                               <span style={{ color: 'var(--danger)' }}>out of stock</span>
                             ) : low ? (
-                              <span style={{ color: 'var(--warning)' }}>reorder at {row.product.reorderLevel}</span>
+                              <span style={{ color: 'var(--warning)' }}>
+                                reorder at {formatQty(row.product.reorderLevel, row.product.unit)}
+                              </span>
                             ) : (
-                              `${row.product.unit}s`
+                              // The quantity above already carries its unit.
+                              // Repeating it read as "24.75 kg kgs".
+                              `${row.batches.filter((b) => b.quantity > 0).length} lot${row.batches.filter((b) => b.quantity > 0).length === 1 ? '' : 's'}`
                             )}
                           </div>
                         </td>
@@ -383,7 +393,7 @@ export function Inventory() {
                               size="sm"
                               iconOnly
                               icon="edit"
-                              onClick={guard('edit a medicine', () => setEditingProduct(row.product))}
+                              onClick={guard('edit an item', () => setEditingProduct(row.product))}
                               aria-label={`Edit ${row.product.name}`}
                             />
                             <Button
@@ -391,7 +401,7 @@ export function Inventory() {
                               size="sm"
                               iconOnly
                               icon="trash"
-                              onClick={guard('delete a medicine', () => setDeleting({ kind: 'product', id: row.product.id, label: row.product.name }))}
+                              onClick={guard('delete an item', () => setDeleting({ kind: 'product', id: row.product.id, label: row.product.name }))}
                               aria-label={`Delete ${row.product.name}`}
                             />
                           </div>
@@ -404,7 +414,7 @@ export function Inventory() {
                             <div style={{ padding: 'var(--space-4) var(--space-5) var(--space-4) 3.5rem' }}>
                               {row.batches.length === 0 ? (
                                 <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-                                  No batches yet — use “Stock” to receive the first one.
+                                  No stock yet — use “Stock” to receive the first lot.
                                 </p>
                               ) : (
                                 <table className="data" style={{ background: 'var(--surface)', borderRadius: 'var(--radius)' }}>
@@ -422,7 +432,7 @@ export function Inventory() {
                                   </thead>
                                   <tbody>
                                     {row.batches.map((batch) => {
-                                      const expired = batch.expiry < today;
+                                      const expired = lotExpired(batch, today);
                                       const left = daysUntil(batch.expiry);
                                       return (
                                         <tr key={batch.id}>
@@ -501,7 +511,7 @@ export function Inventory() {
 
       {deleting && (
         <ConfirmDialog
-          title={deleting.kind === 'product' ? 'Delete this medicine?' : 'Delete this batch?'}
+          title={deleting.kind === 'product' ? 'Delete this item?' : 'Delete this stock lot?'}
           message={
             <>
               <strong>{deleting.label}</strong> will be removed

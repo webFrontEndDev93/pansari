@@ -7,6 +7,7 @@
  * added. Pakistan levies one federal sales tax, so there is a single figure.
  */
 import type { CartLine } from './types';
+import { roundQty } from './units';
 
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -19,7 +20,9 @@ export interface LineTotals {
 }
 
 export function lineTotals(line: Pick<CartLine, 'batch' | 'qty' | 'discountPct' | 'product'>): LineTotals {
-  const gross = round2(line.batch.salePrice * line.qty);
+  // Rounded by the item's unit first, exactly as the server does, so the total
+  // on screen is the total that gets stored.
+  const gross = round2(line.batch.salePrice * roundQty(line.qty, line.product.unit));
   const discount = round2((gross * line.discountPct) / 100);
   const net = round2(gross - discount);
   const taxable = round2(net / (1 + line.product.taxRate / 100));
@@ -53,8 +56,20 @@ export function billTotals(lines: CartLine[], extraDiscount = 0, roundOff = true
   const payable = round2(taxable + tax);
   const rounded = roundOff ? Math.round(payable) : payable;
 
-  // What the customer saved against printed MRP, plus any discount given.
-  const mrpTotal = round2(lines.reduce((s, l) => s + l.batch.mrp * l.qty, 0));
+  // What the customer saved against printed MRP.
+  //
+  // Only lines that actually have an MRP count. Loose goods have none — a sack
+  // of atta carries no printed price — and counting their zero would drag the
+  // comparison below the bill total and silently report no saving at all on a
+  // cart that mixes loose and packaged goods.
+  const priced = lines.filter((l) => l.batch.mrp > 0);
+  const savings = round2(
+    priced.reduce((s, l) => {
+      const qty = roundQty(l.qty, l.product.unit);
+      const off = (l.batch.mrp - l.batch.salePrice) * qty;
+      return s + Math.max(0, off);
+    }, 0),
+  );
 
   return {
     gross,
@@ -66,6 +81,6 @@ export function billTotals(lines: CartLine[], extraDiscount = 0, roundOff = true
     subtotal: net,
     roundOff: round2(rounded - payable),
     total: round2(rounded),
-    savings: round2(Math.max(0, mrpTotal - rounded)),
+    savings,
   };
 }

@@ -4,6 +4,7 @@ import { expiryLabel, fuzzyScore, money, todayISO } from '../lib/format';
 import type { Batch, Product } from '../lib/types';
 import { Icon } from './Icon';
 import { Badge } from './ui';
+import { formatQty, isWeighed, priceSuffix } from '../lib/units';
 
 export interface SearchHandle {
   focus: () => void;
@@ -50,7 +51,10 @@ export const ProductSearch = forwardRef<SearchHandle, ProductSearchProps>(functi
     for (const product of products) {
       // Match against everything the counter staff might type, including the
       // barcode so a scanner gun works with no extra wiring.
-      const haystacks = [product.name, product.genericName, product.barcode, product.manufacturer];
+      // Urdu is in here on purpose: staff at the counter think and type in it,
+      // and a search that only speaks English makes them translate before they
+      // can ring anything up.
+      const haystacks = [product.name, product.urduName, product.barcode, product.brand];
       let best = -1;
       for (const hay of haystacks) {
         if (!hay) continue;
@@ -118,13 +122,13 @@ export const ProductSearch = forwardRef<SearchHandle, ProductSearchProps>(functi
         <input
           ref={inputRef}
           className="search-input"
-          placeholder="Search medicine by name, salt, brand or barcode…"
+          placeholder="Search by name, Urdu name, brand or barcode…"
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onBlur={() => window.setTimeout(() => setOpen(false), 140)}
           onKeyDown={onKeyDown}
-          aria-label="Search medicines"
+          aria-label="Search items"
           autoComplete="off"
           spellCheck={false}
         />
@@ -152,7 +156,7 @@ export const ProductSearch = forwardRef<SearchHandle, ProductSearchProps>(functi
           {hits.length === 0 && (
             <div style={{ padding: 'var(--space-5)', textAlign: 'center' }} className="muted">
               <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text)' }}>
-                No medicine matches “{query}”
+                Nothing matches “{query}”
               </div>
               <div style={{ fontSize: 'var(--text-xs)', marginTop: 4 }}>
                 Add it from the Inventory screen first.
@@ -178,15 +182,16 @@ export const ProductSearch = forwardRef<SearchHandle, ProductSearchProps>(functi
                 <div className="grow">
                   <div className="result-name">
                     <span className="truncate">{hit.product.name}</span>
-                    {hit.product.strength && hit.product.strength !== '—' && (
-                      <span className="muted" style={{ fontWeight: 500 }}>{hit.product.strength}</span>
+                    {hit.product.urduName && (
+                      <span className="muted" style={{ fontWeight: 500 }} dir="auto">{hit.product.urduName}</span>
                     )}
-                    {hit.product.prescriptionRequired && <Badge tone="info">Rx</Badge>}
+                    {isWeighed(hit.product.unit) && <Badge tone="brand">Loose</Badge>}
                   </div>
                   <div className="result-meta">
-                    {hit.product.manufacturer} · {hit.product.packSize}
-                    {hit.product.rack && ` · Rack ${hit.product.rack}`}
-                    {hit.batch && ` · B:${hit.batch.batchNo} · ${expiryLabel(hit.batch.expiry)}`}
+                    {[hit.product.brand, hit.product.size].filter(Boolean).join(' · ')}
+                    {hit.product.aisle && ` · Aisle ${hit.product.aisle}`}
+                    {hit.batch?.batchNo && ` · B:${hit.batch.batchNo}`}
+                    {hit.batch?.expiry && ` · ${expiryLabel(hit.batch.expiry)}`}
                   </div>
                 </div>
 
@@ -195,9 +200,11 @@ export const ProductSearch = forwardRef<SearchHandle, ProductSearchProps>(functi
                     <Badge tone="danger">Out of stock</Badge>
                   ) : (
                     <>
-                      <span className="result-price">{money(hit.batch!.salePrice)}</span>
+                      <span className="result-price">
+                        {money(hit.batch!.salePrice)}{priceSuffix(hit.product.unit)}
+                      </span>
                       <Badge tone={hit.stock <= hit.product.reorderLevel ? 'warning' : 'neutral'}>
-                        {hit.stock} left
+                        {formatQty(hit.stock, hit.product.unit)} left
                       </Badge>
                     </>
                   )}

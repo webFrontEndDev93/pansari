@@ -18,8 +18,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
  * and nothing in the code assumes these particular numbers.
  */
 export const DEFAULT_TAX_RATES = [
-  { rate: 0, label: 'Exempt / not shown' },
-  { rate: 1, label: 'Registered drug' },
+  { rate: 0, label: 'Exempt / unprocessed food' },
   { rate: 18, label: 'Standard rate' },
 ];
 
@@ -30,29 +29,32 @@ export function emptyDb() {
     settings: {
       // Every field a receipt prints starts blank or as an obvious placeholder,
       // and the receipt omits the blanks rather than printing something made up.
-      // A drug licence number and a pharmacist's name are claims the shop makes
-      // to its customers and its regulator; shipping plausible-looking ones
-      // invites a shop to print somebody else's by simply not opening Settings.
-      shopName: 'Your Pharmacy',
+      // A tax number is a claim the shop makes to its customers and to the FBR;
+      // shipping a plausible-looking one invites a shop to print somebody
+      // else's by simply never opening Settings.
+      shopName: 'Your Shop',
       addressLine1: '',
       addressLine2: '',
       phone: '',
       email: '',
       ntn: '',
       strn: '',
-      drugLicense: '',
-      pharmacist: '',
       currency: 'PKR',
       currencySymbol: 'Rs',
       invoicePrefix: 'INV',
       nextInvoiceSeq: 1,
+      // A fallback only: each product carries its own reorder level, which is
+      // what a mixed shop needs — 20 is sensible for packets and meaningless
+      // for a sack of atta measured in kilos.
       lowStockThreshold: 20,
-      expiryAlertDays: 90,
-      // Sales tax applied to a new medicine unless you change it on the product.
-      // 0% suits a retailer whose registered-drug tax was already discharged
-      // upstream; raise it if your shop accounts for output tax itself.
+      // Shorter than a pharmacy's. Milk, bread, eggs and yoghurt are the items
+      // whose dates actually bite in a grocery.
+      expiryAlertDays: 30,
+      // Sales tax applied to a new item unless you change it on the product.
+      // 0% suits a shop selling mostly unprocessed food; packaged and branded
+      // goods generally sit at the standard rate.
       defaultTaxRate: 0,
-      // The rates offered when editing a medicine. Entirely yours to change —
+      // The rates offered when editing an item. Entirely yours to change —
       // add, remove or relabel rows from Settings.
       taxRates: DEFAULT_TAX_RATES.map((r) => ({ ...r })),
       roundOffTotals: true,
@@ -62,7 +64,7 @@ export function emptyDb() {
       backupIntervalHours: 6,
       backupKeep: 14,
       backupFolder: '',
-      footerNote: 'Medicines once sold are not returnable without a valid bill.',
+      footerNote: 'Please check your items before leaving the counter.',
     },
     products: [],
     batches: [],
@@ -80,42 +82,17 @@ let writeChain = Promise.resolve();
 /**
  * Brings an older db.json up to date in memory. Kept idempotent and silent so a
  * shop that has been running for months can upgrade without losing history.
+ *
+ * There is nothing here for old field names, because Pansari has never shipped
+ * under another shape. What is here is an invariant rather than a migration.
  */
 function migrate(db) {
-  // 'upi' was the India-era name for what is now the 'digital' tender
-  // (EasyPaisa / JazzCash / QR). Past bills keep their totals, only the label moves.
-  for (const sale of db.sales) {
-    if (sale.paymentMode === 'upi') sale.paymentMode = 'digital';
-  }
-  for (const payment of db.payments) {
-    if (payment.mode === 'upi') payment.mode = 'digital';
-  }
-
-  // India's GST fields become Pakistan's single sales tax. Rates and totals are
-  // carried over untouched — only the names change, so past bills still add up.
-  const renameTax = (row) => {
-    if (row.gstRate !== undefined && row.taxRate === undefined) row.taxRate = row.gstRate;
-    if (row.hsn !== undefined && row.hsCode === undefined) row.hsCode = row.hsn;
-    delete row.gstRate;
-    delete row.hsn;
-  };
-  for (const product of db.products) renameTax(product);
-  for (const sale of db.sales) {
-    for (const item of sale.items) renameTax(item);
-    // CGST/SGST were only ever `tax` halved; the single `tax` figure is the truth.
-    delete sale.cgst;
-    delete sale.sgst;
-  }
-  if (db.settings.gstin !== undefined) {
-    if (!db.settings.ntn) db.settings.ntn = db.settings.gstin;
-    delete db.settings.gstin;
-  }
   if (!Array.isArray(db.settings.taxRates) || db.settings.taxRates.length === 0) {
     db.settings.taxRates = DEFAULT_TAX_RATES.map((r) => ({ ...r }));
   }
   // Any rate already in use on a product must stay selectable, even if the
-  // shop's list no longer mentions it — otherwise editing that product would
-  // silently change its tax.
+  // shop's list no longer mentions it — otherwise opening that product in the
+  // editor and saving it would silently change its tax.
   const listed = new Set(db.settings.taxRates.map((r) => r.rate));
   for (const product of db.products) {
     if (typeof product.taxRate === 'number' && !listed.has(product.taxRate)) {
@@ -125,6 +102,7 @@ function migrate(db) {
   }
   db.settings.taxRates.sort((a, b) => a.rate - b.rate);
 }
+
 
 function ensureDirs() {
   fs.mkdirSync(DATA_DIR, { recursive: true });

@@ -1,5 +1,6 @@
 import { formatDateTime, formatMonthYear, money, plain } from '../lib/format';
 import type { Sale, Settings } from '../lib/types';
+import { formatQty, priceSuffix } from '../lib/units';
 
 const MODE_LABEL: Record<string, string> = {
   cash: 'Cash',
@@ -27,7 +28,6 @@ export function Receipt({ sale, settings }: { sale: Sale; settings: Settings }) 
         {settings.addressLine1 && <div>{settings.addressLine1}</div>}
         {settings.addressLine2 && <div>{settings.addressLine2}</div>}
         {settings.phone && <div>Ph: {settings.phone}</div>}
-        {settings.drugLicense && <div>DL No: {settings.drugLicense}</div>}
         {settings.ntn && <div>NTN: {settings.ntn}</div>}
         {settings.strn && <div>STRN: {settings.strn}</div>}
       </div>
@@ -39,8 +39,6 @@ export function Receipt({ sale, settings }: { sale: Sale; settings: Settings }) 
         <span>{formatDateTime(sale.at)}</span>
       </div>
       <div>Customer: {sale.customerName || 'Walk-in'}</div>
-      {sale.doctorName && <div>Doctor: {sale.doctorName}</div>}
-      {sale.prescriptionRef && <div>Rx Ref: {sale.prescriptionRef}</div>}
       {sale.soldBy && <div>Served by: {sale.soldBy}</div>}
 
       <hr className="receipt-rule" />
@@ -61,14 +59,26 @@ export function Receipt({ sale, settings }: { sale: Sale; settings: Settings }) 
               <tr key={`${item.batchId}-${index}`}>
                 <td>
                   {item.name}
-                  <br />
-                  <span style={{ fontSize: 10, color: '#555' }}>
-                    B:{item.batchNo} · Exp {formatMonthYear(item.expiry)}
-                    {item.discountPct > 0 ? ` · -${item.discountPct}%` : ''}
-                  </span>
+                  {item.size && item.size !== 'Loose' ? ` ${item.size}` : ''}
+                  {/* A slip that only says "B: · Exp —" for a scoop of daal is
+                      noise. Each part appears only when it exists. */}
+                  {(item.batchNo || item.expiry || item.discountPct > 0) && (
+                    <>
+                      <br />
+                      <span style={{ fontSize: 10, color: '#555' }}>
+                        {[
+                          item.batchNo && `B:${item.batchNo}`,
+                          item.expiry && `Exp ${formatMonthYear(item.expiry)}`,
+                          item.discountPct > 0 && `-${item.discountPct}%`,
+                        ].filter(Boolean).join(' · ')}
+                      </span>
+                    </>
+                  )}
                 </td>
-                <td className="r">{item.qty}</td>
-                <td className="r">{plain(item.salePrice)}</td>
+                {/* The weight is the thing the customer is checking, so it is
+                    printed the way they asked for it: 750 g, not 0.75. */}
+                <td className="r">{formatQty(item.qty, item.unit)}</td>
+                <td className="r">{plain(item.salePrice)}{priceSuffix(item.unit)}</td>
                 <td className="r">{plain(net)}</td>
               </tr>
             );
@@ -120,9 +130,8 @@ export function Receipt({ sale, settings }: { sale: Sale; settings: Settings }) 
       <hr className="receipt-rule" />
 
       <div className="receipt-center" style={{ fontSize: 10 }}>
-        {settings.pharmacist && <div>Pharmacist: {settings.pharmacist}</div>}
         <div style={{ marginTop: 4 }}>{settings.footerNote}</div>
-        <div style={{ marginTop: 6, fontWeight: 700 }}>Get well soon · Thank you</div>
+        <div style={{ marginTop: 6, fontWeight: 700 }}>Shukriya · Thank you</div>
       </div>
     </div>
   );

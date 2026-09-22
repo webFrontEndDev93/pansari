@@ -17,7 +17,7 @@ export function CustomerPicker({
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState({ name: '', phone: '', doctor: '', address: '' });
+  const [draft, setDraft] = useState({ name: '', phone: '', address: '' });
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -75,14 +75,6 @@ export function CustomerPicker({
               placeholder="+92 300 1234567"
             />
           </Field>
-          <Field label="Referring doctor">
-            <input
-              className="input"
-              value={draft.doctor}
-              onChange={(e) => setDraft({ ...draft, doctor: e.target.value })}
-              placeholder="Dr. S. Nair"
-            />
-          </Field>
           <Field label="Address">
             <input
               className="input"
@@ -135,7 +127,6 @@ export function CustomerPicker({
               <span style={{ display: 'block', fontWeight: 580, fontSize: 'var(--text-sm)' }}>{customer.name}</span>
               <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
                 {customer.phone || 'No phone on file'}
-                {customer.doctor && ` · ${customer.doctor}`}
               </span>
             </span>
             {customer.creditBalance > 0 && <Badge tone="warning">{money(customer.creditBalance)} due</Badge>}

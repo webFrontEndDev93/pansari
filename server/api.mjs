@@ -5,12 +5,20 @@ import {
 } from './auth.mjs';
 import {
   round2,
+  round3,
   todayISO,
   daysUntil,
   isExpired,
+  hasExpiry,
   billTotals,
   sellableStock,
   nextInvoiceNo,
+  roundQty,
+  exceedsStock,
+  formatQty,
+  isWeighed,
+  UNIT_KEYS,
+  UNITS,
 } from './domain.mjs';
 
 class HttpError extends Error {
@@ -34,46 +42,73 @@ const num = (v, fallback = 0) => {
 
 function productPayload(body, settings) {
   const name = str(body.name);
-  if (!name) throw bad('Product name is required.');
+  if (!name) throw bad('Item name is required.');
+
+  // The unit decides whether this item is weighed or counted, which changes how
+  // it is priced, billed and printed. An unknown unit must not fall through to
+  // something arbitrary, so it is rejected rather than silently corrected.
+  const unit = str(body.unit, 'piece');
+  if (!UNIT_KEYS.includes(unit)) {
+    throw bad(`Unit must be one of: ${UNIT_KEYS.join(', ')}.`);
+  }
+
   return {
     name,
-    genericName: str(body.genericName),
-    manufacturer: str(body.manufacturer),
+    urduName: str(body.urduName),
+    brand: str(body.brand),
     category: str(body.category, 'General'),
-    form: str(body.form, 'Tablet'),
-    strength: str(body.strength),
-    packSize: str(body.packSize),
+    size: str(body.size),
     hsCode: str(body.hsCode),
     taxRate: Math.min(Math.max(num(body.taxRate, settings?.defaultTaxRate ?? 0), 0), 100),
-    unit: str(body.unit, 'strip'),
-    rack: str(body.rack),
-    reorderLevel: Math.max(0, Math.round(num(body.reorderLevel, 20))),
-    prescriptionRequired: Boolean(body.prescriptionRequired),
+    unit,
+    aisle: str(body.aisle),
+    // A weighed item's reorder level is itself a weight, so it may be
+    // fractional — half a kilo of saffron is a real reorder point.
+    reorderLevel: Math.max(0, roundQty(num(body.reorderLevel, isWeighed(unit) ? 2 : 20), unit)),
     barcode: str(body.barcode),
     notes: str(body.notes),
   };
 }
 
+/**
+ * A stock lot.
+ *
+ * Three things a pharmacy could insist on are optional here, because a grocery
+ * genuinely does not have them: a sack of atta carries no batch number, loose
+ * rice carries no expiry date, and nothing sold by weight carries a printed
+ * MRP. Requiring any of them would force the shopkeeper to invent one, which is
+ * exactly the habit this till is built to avoid.
+ */
 function batchPayload(body, db) {
   const productId = str(body.productId);
-  if (!db.products.some((p) => p.id === productId)) throw bad('Unknown product for this batch.');
-  const batchNo = str(body.batchNo);
-  if (!batchNo) throw bad('Batch number is required.');
+  const product = db.products.find((p) => p.id === productId);
+  if (!product) throw bad('Unknown item for this stock lot.');
+
   const expiry = str(body.expiry);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) throw bad('Expiry must be a date (YYYY-MM-DD).');
-  const mrp = round2(num(body.mrp));
-  if (mrp <= 0) throw bad('MRP must be greater than zero.');
-  const salePrice = round2(num(body.salePrice, mrp));
-  if (salePrice <= 0) throw bad('Sale price must be greater than zero.');
-  if (salePrice > mrp) throw bad('Sale price cannot exceed the printed MRP.');
+  if (expiry && !hasExpiry(expiry)) throw bad('Expiry must be a date (YYYY-MM-DD), or left blank.');
+
+  const salePrice = round2(num(body.salePrice));
+  if (salePrice <= 0) {
+    throw bad(isWeighed(product.unit)
+      ? `Price per ${product.unit} must be greater than zero.`
+      : 'Sale price must be greater than zero.');
+  }
+  // MRP is the price printed on a packet. Loose goods have none, so zero means
+  // "not printed" rather than "free", and the ceiling check only applies when
+  // there is actually a printed price to undercut.
+  const mrp = Math.max(0, round2(num(body.mrp)));
+  if (mrp > 0 && salePrice > mrp) throw bad('Sale price cannot exceed the printed MRP.');
+
   return {
     productId,
-    batchNo,
+    batchNo: str(body.batchNo),
     expiry,
     mrp,
     salePrice,
-    costPrice: round2(num(body.costPrice, round2(salePrice * 0.78))),
-    quantity: Math.max(0, Math.round(num(body.quantity))),
+    costPrice: round2(num(body.costPrice, round2(salePrice * 0.85))),
+    // Weighed stock is fractional: 12.5 kg left in the sack is an ordinary
+    // reading, and rounding it to 13 would invent half a kilo of atta.
+    quantity: Math.max(0, roundQty(num(body.quantity), product.unit)),
     supplier: str(body.supplier),
     receivedAt: str(body.receivedAt, todayISO()),
   };
@@ -89,7 +124,6 @@ function customerPayload(body) {
     phone,
     email: str(body.email),
     address: str(body.address),
-    doctor: str(body.doctor),
     notes: str(body.notes),
   };
 }
@@ -164,13 +198,24 @@ function createSale(db, body, actor) {
     const product = db.products.find((p) => p.id === batch.productId);
     if (!product) throw bad(`Line ${index + 1}: that product no longer exists.`);
     if (isExpired(batch.expiry)) {
-      throw bad(`${product.name} batch ${batch.batchNo} expired on ${batch.expiry} and cannot be sold.`);
+      throw bad(`${product.name} expired on ${batch.expiry} and cannot be sold.`);
     }
-    const qty = Math.round(num(raw.qty));
-    if (qty <= 0) throw bad(`Line ${index + 1}: quantity must be at least 1.`);
-    if (qty > batch.quantity) {
-      throw bad(`Only ${batch.quantity} left of ${product.name} batch ${batch.batchNo}.`);
+
+    // Rounded by the item's own unit: to the gram for anything weighed, to a
+    // whole thing otherwise. A till that lets someone sell 2.4 packets is
+    // wrong in a way nobody notices until the stock count does not reconcile.
+    const qty = roundQty(num(raw.qty), product.unit);
+    if (qty <= 0) {
+      throw bad(isWeighed(product.unit)
+        ? `Line ${index + 1}: weigh the item before adding it.`
+        : `Line ${index + 1}: quantity must be at least 1.`);
     }
+    // Compared with a half-gram tolerance, so asking for exactly the last
+    // 500 g in the sack is not refused over floating-point dust.
+    if (exceedsStock(qty, batch.quantity)) {
+      throw bad(`Only ${formatQty(batch.quantity, product.unit)} of ${product.name} left.`);
+    }
+
     const discountPct = Math.min(Math.max(num(raw.discountPct), 0), 100);
     return {
       batch,
@@ -179,8 +224,9 @@ function createSale(db, body, actor) {
         productId: product.id,
         batchId: batch.id,
         name: product.name,
-        strength: product.strength,
-        form: product.form,
+        urduName: product.urduName,
+        brand: product.brand,
+        size: product.size,
         batchNo: batch.batchNo,
         expiry: batch.expiry,
         hsCode: product.hsCode,
@@ -216,14 +262,12 @@ function createSale(db, body, actor) {
   }
   if (due > 0 && !customer) throw bad('Select a customer before putting a bill on credit.');
 
-  const rxRequired = prepared.some((p) => p.product.prescriptionRequired);
-  const prescriptionRef = str(body.prescriptionRef);
-  if (rxRequired && !prescriptionRef) {
-    throw bad('This bill has prescription-only medicine — record a prescription reference.');
+  // Everything validated; commit the stock movement. Re-rounded after the
+  // subtraction, because repeatedly taking 0.1 kg off a sack is exactly how a
+  // stock figure drifts into 4.699999999999999.
+  for (const { batch, line } of prepared) {
+    batch.quantity = Math.max(0, round3(batch.quantity - line.qty));
   }
-
-  // Everything validated; commit the stock movement.
-  for (const { batch, line } of prepared) batch.quantity -= line.qty;
 
   const cost = round2(lines.reduce((s, l) => s + l.costPrice * l.qty, 0));
   const sale = {
@@ -239,8 +283,6 @@ function createSale(db, body, actor) {
     due,
     customerId: customer?.id ?? null,
     customerName: customer?.name ?? str(body.customerName, 'Walk-in'),
-    doctorName: str(body.doctorName),
-    prescriptionRef,
     note: str(body.note),
     status: 'completed',
     // Who was at the till. Denormalised on purpose: the bill must keep saying
@@ -373,17 +415,19 @@ function reportSummary(db, from, to) {
 
 /** Low stock, near expiry and already-expired batches — the shop's daily worry list. */
 function alerts(db) {
-  const expiryWindow = db.settings.expiryAlertDays ?? 90;
+  const expiryWindow = db.settings.expiryAlertDays ?? 30;
   const lowStock = db.products
     .map((p) => ({ product: p, stock: sellableStock(db.batches, p.id) }))
     .filter(({ product, stock }) => stock <= (product.reorderLevel || db.settings.lowStockThreshold || 20))
     .map(({ product, stock }) => ({
       productId: product.id,
       name: product.name,
-      strength: product.strength,
+      size: product.size,
+      unit: product.unit,
       stock,
+      stockLabel: formatQty(stock, product.unit),
       reorderLevel: product.reorderLevel,
-      rack: product.rack,
+      aisle: product.aisle,
     }))
     .sort((a, b) => a.stock - b.stock);
 
@@ -393,10 +437,12 @@ function alerts(db) {
       batchId: b.id,
       productId: b.productId,
       name: product?.name ?? 'Unknown',
-      strength: product?.strength ?? '',
+      size: product?.size ?? '',
+      unit: product?.unit ?? 'piece',
       batchNo: b.batchNo,
       expiry: b.expiry,
       quantity: b.quantity,
+      quantityLabel: formatQty(b.quantity, product?.unit ?? 'piece'),
       daysLeft: daysUntil(b.expiry),
       value: round2(b.quantity * b.costPrice),
     };
@@ -432,6 +478,11 @@ export const routes = [
     const db = readDb();
     return {
       settings: db.settings,
+      // Sent rather than duplicated in the frontend: how a unit is priced,
+      // stepped and printed must mean exactly one thing, and a second copy of
+      // this table in TypeScript would be free to drift away from the one the
+      // server actually validates and stores against.
+      units: UNITS,
       products: db.products,
       batches: db.batches,
       customers: db.customers,
@@ -467,7 +518,7 @@ export const routes = [
       const index = db.products.findIndex((x) => x.id === p.id);
       if (index === -1) throw notFound('Product not found.');
       if (db.sales.some((s) => s.items.some((i) => i.productId === p.id))) {
-        throw bad('This medicine appears on past bills, so it cannot be deleted. Set its stock to zero instead.');
+        throw bad('This item appears on past bills, so it cannot be deleted. Set its stock to zero instead.');
       }
       db.batches = db.batches.filter((b) => b.productId !== p.id);
       const [removed] = db.products.splice(index, 1);
@@ -489,7 +540,7 @@ export const routes = [
       const wasPrice = batch.salePrice;
       const wasQty = batch.quantity;
       Object.assign(batch, batchPayload({ ...batch, ...body }, db));
-      const name = db.products.find((x) => x.id === batch.productId)?.name ?? 'a medicine';
+      const name = db.products.find((x) => x.id === batch.productId)?.name ?? 'an item';
       if (wasPrice !== batch.salePrice) {
         audit(db, ctx?.actor, 'batch.price', `Changed ${name} batch ${batch.batchNo} price from ${asMoney(db, wasPrice)} to ${asMoney(db, batch.salePrice)}`);
       } else if (wasQty !== batch.quantity) {
@@ -505,7 +556,7 @@ export const routes = [
         throw bad('This batch appears on past bills, so it cannot be deleted. Set its quantity to zero instead.');
       }
       const [removed] = db.batches.splice(index, 1);
-      const name = db.products.find((x) => x.id === removed.productId)?.name ?? 'a medicine';
+      const name = db.products.find((x) => x.id === removed.productId)?.name ?? 'an item';
       audit(db, ctx?.actor, 'batch.delete', `Deleted ${name} batch ${removed.batchNo}`);
       return removed;
     }), 'admin'],

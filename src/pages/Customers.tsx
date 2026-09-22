@@ -37,7 +37,7 @@ export function Customers() {
         !needle ||
         c.name.toLowerCase().includes(needle) ||
         c.phone.replace(/\s/g, '').includes(needle.replace(/\s/g, '')) ||
-        c.doctor.toLowerCase().includes(needle),
+        c.address.toLowerCase().includes(needle),
       )
       .sort((a, b) => b.creditBalance - a.creditBalance || a.name.localeCompare(b.name));
   }, [customers, query, lens]);
@@ -109,7 +109,7 @@ export function Customers() {
                 <Icon name="search" size={15} />
                 <input
                   className="input"
-                  placeholder="Search by name, phone or doctor…"
+                  placeholder="Search by name, phone or address…"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -134,7 +134,7 @@ export function Customers() {
                   <tr>
                     <th>Customer</th>
                     <th>Phone</th>
-                    <th>Doctor</th>
+                    <th>Address</th>
                     <th className="right">Balance</th>
                     <th style={{ width: '10rem' }} />
                   </tr>
@@ -158,7 +158,7 @@ export function Customers() {
                         </div>
                       </td>
                       <td className="num">{customer.phone || <span className="muted">—</span>}</td>
-                      <td className="muted">{customer.doctor || '—'}</td>
+                      <td className="muted truncate">{customer.address || '—'}</td>
                       <td className="right">
                         {customer.creditBalance > 0 ? (
                           <Badge tone="warning">{money(customer.creditBalance)}</Badge>
@@ -285,8 +285,7 @@ export function Customers() {
                                 </span>
                                 <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
                                   {formatDate(entry.sale.at)} · {entry.sale.items.length} item(s)
-                                  {entry.sale.prescriptionRef && ` · ${entry.sale.prescriptionRef}`}
-                                </span>
+                                        </span>
                               </span>
                               <span className="num" style={{ fontWeight: 600 }}>{money(entry.sale.total)}</span>
                             </button>
@@ -370,7 +369,7 @@ function CustomerForm({ customer, onClose }: { customer: Customer | null; onClos
   const { setCustomers, notify, reportError } = useStore();
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Partial<Customer>>(
-    customer ?? { name: '', phone: '', email: '', address: '', doctor: '', notes: '' },
+    customer ?? { name: '', phone: '', email: '', address: '', notes: '' },
   );
   const set = <K extends keyof Customer>(key: K, value: Customer[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -416,9 +415,6 @@ function CustomerForm({ customer, onClose }: { customer: Customer | null; onClos
         </Field>
         <Field label="Phone">
           <input className="input" value={draft.phone ?? ''} onChange={(e) => set('phone', e.target.value)} placeholder="+92 300 1234567" />
-        </Field>
-        <Field label="Referring doctor">
-          <input className="input" value={draft.doctor ?? ''} onChange={(e) => set('doctor', e.target.value)} />
         </Field>
         <Field label="Email">
           <input className="input" type="email" value={draft.email ?? ''} onChange={(e) => set('email', e.target.value)} />

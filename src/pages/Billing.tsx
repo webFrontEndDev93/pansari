@@ -3,6 +3,8 @@ import { api } from '../lib/api';
 import { billTotals, lineTotals } from '../lib/pricing';
 import { useStore } from '../lib/store';
 import { expiryLabel, formatMonthYear, money, todayISO } from '../lib/format';
+import { QtyCell } from '../components/QtyCell';
+import { formatQty, isWeighed, round3, roundQty, unitOf } from '../lib/units';
 import type { Batch, CartLine, Customer, PaymentMode, Product, Sale } from '../lib/types';
 import { Icon, type IconName } from '../components/Icon';
 import { Badge, Button, EmptyState, Field, Modal } from '../components/ui';
@@ -36,8 +38,6 @@ export function Billing() {
   const [lines, setLines] = useState<CartLine[]>([]);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
-  const [doctorName, setDoctorName] = useState('');
-  const [prescriptionRef, setPrescriptionRef] = useState('');
   const [extraDiscount, setExtraDiscount] = useState(0);
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('cash');
   const [tendered, setTendered] = useState('');
@@ -56,8 +56,10 @@ export function Billing() {
     [lines, extraDiscount, settings.roundOffTotals],
   );
 
-  const rxRequired = useMemo(() => lines.some((l) => l.product.prescriptionRequired), [lines]);
-  const cartCount = lines.reduce((sum, l) => sum + l.qty, 0);
+  // Counted as lines, not as a sum of quantities: 0.5 kg of daal plus 2 packets
+  // of biscuits is not 2.5 of anything, and a header that claimed it was would
+  // be worse than no number at all.
+  const cartCount = lines.length;
 
   /** Live stock for a batch, minus whatever this bill has already claimed. */
   const availableFor = useCallback(
@@ -66,7 +68,7 @@ export function Billing() {
       const claimed = lines
         .filter((l) => l.batch.id === batch.id && l.key !== excludeKey)
         .reduce((s, l) => s + l.qty, 0);
-      return live - claimed;
+      return round3(live - claimed);
     },
     [batches, lines],
   );
@@ -77,18 +79,26 @@ export function Billing() {
       const live = batches.find((b) => b.id === batch.id)?.quantity ?? 0;
       const claimed = current.filter((l) => l.batch.id === batch.id).reduce((s, l) => s + l.qty, 0);
 
-      if (claimed >= live) {
-        notify('warning', 'No more stock', `Only ${live} of ${product.name} batch ${batch.batchNo} on hand.`);
+      const free = round3(live - claimed);
+      if (free <= 0) {
+        notify('warning', 'No more stock', `Only ${formatQty(live, product.unit)} of ${product.name} on hand.`);
         return current;
       }
       if (existing) {
         setFocusedKey(existing.key);
+        // A second scan of the same packet means one more packet. A second scan
+        // of loose daal means nothing sensible, so the weight is left alone for
+        // the shopkeeper to type.
+        if (isWeighed(product.unit)) return current;
         return current.map((l) => (l.key === existing.key ? { ...l, qty: l.qty + 1 } : l));
       }
       keyCounter.current += 1;
       const key = `line_${keyCounter.current}`;
       setFocusedKey(key);
-      return [...current, { key, product, batch, qty: 1, discountPct: 0 }];
+      // Weighed goods open at a kilo, or at whatever is left if that is less,
+      // and the shopkeeper types the real figure off the scale.
+      const opening = isWeighed(product.unit) ? Math.min(1, free) : 1;
+      return [...current, { key, product, batch, qty: roundQty(opening, product.unit), discountPct: 0 }];
     });
   }, [batches, notify]);
 
@@ -96,10 +106,15 @@ export function Billing() {
     setLines((current) =>
       current.map((line) => {
         if (line.key !== key) return line;
+        const unit = line.product.unit;
         const ceiling = availableFor(line.batch, key);
-        const next = Math.max(1, Math.min(Math.round(qty) || 1, Math.max(1, ceiling)));
-        if (qty > ceiling && ceiling > 0) {
-          notify('warning', 'Stock limit reached', `Only ${ceiling} left in batch ${line.batch.batchNo}.`);
+        // A gram is the smallest thing that can be weighed out; a packet is the
+        // smallest thing that can be counted.
+        const floor = isWeighed(unit) ? 0.001 : 1;
+        const wanted = roundQty(qty, unit) || floor;
+        const next = Math.max(floor, Math.min(wanted, Math.max(floor, ceiling)));
+        if (wanted > ceiling && ceiling > 0) {
+          notify('warning', 'Stock limit reached', `Only ${formatQty(ceiling, unit)} of ${line.product.name} left.`);
         }
         return { ...line, qty: next };
       }),
@@ -114,8 +129,6 @@ export function Billing() {
   const clearBill = useCallback(() => {
     setLines([]);
     setCustomer(null);
-    setDoctorName('');
-    setPrescriptionRef('');
     setExtraDiscount(0);
     setPaymentMode('cash');
     setTendered('');
@@ -125,12 +138,8 @@ export function Billing() {
 
   const checkout = useCallback(async () => {
     if (lines.length === 0) {
-      notify('warning', 'Nothing to bill', 'Add at least one medicine first.');
+      notify('warning', 'Nothing to bill', 'Scan or search for an item first.');
       searchRef.current?.focus();
-      return;
-    }
-    if (rxRequired && !prescriptionRef.trim()) {
-      notify('warning', 'Prescription reference needed', 'This bill contains prescription-only medicine.');
       return;
     }
     if (paymentMode === 'credit' && !customer) {
@@ -152,8 +161,6 @@ export function Billing() {
         paid: paidNow,
         customerId: customer?.id ?? null,
         customerName: customer?.name ?? 'Walk-in',
-        doctorName: doctorName || customer?.doctor || '',
-        prescriptionRef,
         note,
       });
       registerSale(sale);
@@ -166,8 +173,8 @@ export function Billing() {
       setBusy(false);
     }
   }, [
-    lines, rxRequired, prescriptionRef, paymentMode, customer, tendered, totals.total,
-    extraDiscount, doctorName, note, notify, registerSale, clearBill, reportError,
+    lines, paymentMode, customer, tendered, totals.total,
+    extraDiscount, note, notify, registerSale, clearBill, reportError,
   ]);
 
   // Counter shortcuts: F9 pay, F8 clear, / focus search, Esc drop focus.
@@ -210,7 +217,7 @@ export function Billing() {
               <EmptyState
                 icon="billing"
                 title="No items in this bill yet"
-                text="Search for a medicine above, or scan its barcode. Press ↑ ↓ to browse the results and Enter to add."
+                text="Search for an item above, or scan its barcode. Press ↑ ↓ to browse the results and Enter to add."
                 action={
                   <div className="row" style={{ gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
                     <span className="row" style={{ fontSize: 'var(--text-xs)' }}><kbd className="kbd">/</kbd> search</span>
@@ -223,8 +230,8 @@ export function Billing() {
               <table className="cart">
                 <thead>
                   <tr>
-                    <th style={{ width: '38%' }}>Medicine</th>
-                    <th className="center" style={{ width: '7.5rem' }}>Qty</th>
+                    <th style={{ width: '38%' }}>Item</th>
+                    <th className="center" style={{ width: '9.5rem' }}>Qty / Weight</th>
                     <th className="right">Rate</th>
                     <th className="center" style={{ width: '5rem' }}>Disc %</th>
                     <th className="right">Amount</th>
@@ -235,10 +242,15 @@ export function Billing() {
                   {lines.map((line) => {
                     const computed = lineTotals(line);
                     const ceiling = availableFor(line.batch, line.key);
-                    const days = Math.round(
-                      (new Date(`${line.batch.expiry}T00:00:00`).getTime() -
-                        new Date(`${today}T00:00:00`).getTime()) / 86_400_000,
-                    );
+                    // Loose goods have no expiry at all, so there is no date to
+                    // count down to and nothing to warn about.
+                    const dated = Boolean(line.batch.expiry);
+                    const days = dated
+                      ? Math.round(
+                        (new Date(`${line.batch.expiry}T00:00:00`).getTime() -
+                          new Date(`${today}T00:00:00`).getTime()) / 86_400_000,
+                      )
+                      : Infinity;
                     return (
                       <tr
                         key={line.key}
@@ -248,21 +260,26 @@ export function Billing() {
                         <td>
                           <div className="cart-name">
                             <span className="truncate">{line.product.name}</span>
-                            {line.product.strength && line.product.strength !== '—' && (
+                            {line.product.size && line.product.size !== 'Loose' && (
                               <span className="muted" style={{ fontWeight: 500, fontSize: 'var(--text-xs)' }}>
-                                {line.product.strength}
+                                {line.product.size}
                               </span>
                             )}
-                            {line.product.prescriptionRequired && <Badge tone="info">Rx</Badge>}
+                            {isWeighed(line.product.unit) && <Badge tone="brand">Loose</Badge>}
                           </div>
                           <button
                             type="button"
                             className="cart-batch"
                             onClick={() => setBatchFor(line)}
-                            title="Change batch"
+                            title="Change stock lot"
                           >
-                            B:{line.batch.batchNo} · Exp {formatMonthYear(line.batch.expiry)}
-                            {days <= 90 && (
+                            {/* A sack has no batch number and no date. Printing
+                                "B: · Exp —" for it would be noise, so the lot
+                                line says what there is to say and no more. */}
+                            {line.batch.batchNo && <>B:{line.batch.batchNo}</>}
+                            {dated && <>{line.batch.batchNo ? ' · ' : ''}Exp {formatMonthYear(line.batch.expiry)}</>}
+                            {!line.batch.batchNo && !dated && <>Change lot</>}
+                            {dated && days <= 90 && (
                               <span style={{ color: days <= 30 ? 'var(--danger)' : 'var(--warning)', fontWeight: 600 }}>
                                 ({expiryLabel(line.batch.expiry)})
                               </span>
@@ -272,38 +289,25 @@ export function Billing() {
                         </td>
 
                         <td className="center">
-                          <div className="stepper">
-                            <button
-                              type="button"
-                              onClick={() => setQty(line.key, line.qty - 1)}
-                              disabled={line.qty <= 1}
-                              aria-label="Decrease quantity"
-                            >
-                              <Icon name="minus" size={13} />
-                            </button>
-                            <input
-                              type="number"
-                              value={line.qty}
-                              min={1}
-                              max={ceiling}
-                              onChange={(e) => setQty(line.key, Number(e.target.value))}
-                              aria-label={`Quantity of ${line.product.name}`}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setQty(line.key, line.qty + 1)}
-                              disabled={line.qty >= ceiling}
-                              aria-label="Increase quantity"
-                            >
-                              <Icon name="plus" size={13} />
-                            </button>
-                          </div>
-                          <div className="cell-sub">{ceiling - line.qty} more in stock</div>
+                          <QtyCell
+                            qty={line.qty}
+                            unit={line.product.unit}
+                            ceiling={ceiling}
+                            name={line.product.name}
+                            onChange={(next) => setQty(line.key, next)}
+                          />
                         </td>
 
                         <td className="right num">
-                          <div>{money(line.batch.salePrice)}</div>
-                          {line.batch.salePrice < line.batch.mrp && (
+                          <div>
+                            {money(line.batch.salePrice)}
+                            {isWeighed(line.product.unit) && (
+                              <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
+                                {' / '}{unitOf(line.product.unit).short}
+                              </span>
+                            )}
+                          </div>
+                          {line.batch.mrp > 0 && line.batch.salePrice < line.batch.mrp && (
                             <div className="cell-sub" style={{ textDecoration: 'line-through' }}>
                               {money(line.batch.mrp)}
                             </div>
@@ -359,7 +363,9 @@ export function Billing() {
           </div>
 
           <div className="cart-foot">
-            <span>{lines.length} line{lines.length === 1 ? '' : 's'} · {cartCount} unit{cartCount === 1 ? '' : 's'}</span>
+            {/* Lines only. There is no honest single total to put beside it:
+                0.75 kg of atta and 1 packet of tea do not add up to anything. */}
+            <span>{lines.length} line{lines.length === 1 ? '' : 's'} in this bill</span>
             <div className="grow" />
             {totals.savings > 0 && (
               <span style={{ color: 'var(--success)', fontWeight: 600 }}>
@@ -409,41 +415,6 @@ export function Billing() {
                 <Icon name="chevronRight" size={15} className="muted" />
               </button>
 
-              {rxRequired && (
-                <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
-                  <p
-                    className="row"
-                    style={{
-                      gap: 6, fontSize: 'var(--text-xs)', fontWeight: 560,
-                      color: 'var(--info)', background: 'var(--info-soft)',
-                      border: '1px solid var(--info-border)', borderRadius: 'var(--radius-sm)',
-                      padding: 'var(--space-2) var(--space-3)',
-                    }}
-                  >
-                    <Icon name="rx" size={13} />
-                    This bill has prescription-only medicine.
-                  </p>
-                  <Field label="Prescription reference *">
-                    <input
-                      className="input"
-                      placeholder="e.g. RX-99881"
-                      value={prescriptionRef}
-                      onChange={(e) => setPrescriptionRef(e.target.value)}
-                      aria-invalid={!prescriptionRef.trim()}
-                      aria-label="Prescription reference"
-                    />
-                  </Field>
-                  <Field label="Prescribing doctor">
-                    <input
-                      className="input"
-                      placeholder="Dr. S. Nair"
-                      value={doctorName}
-                      onChange={(e) => setDoctorName(e.target.value)}
-                      aria-label="Prescribing doctor"
-                    />
-                  </Field>
-                </div>
-              )}
             </section>
 
             <section className="tender-section">
@@ -620,10 +591,7 @@ export function Billing() {
 
       {pickingCustomer && (
         <CustomerPicker
-          onPick={(picked) => {
-            setCustomer(picked);
-            if (picked?.doctor && !doctorName) setDoctorName(picked.doctor);
-          }}
+          onPick={setCustomer}
           onClose={() => setPickingCustomer(false)}
         />
       )}

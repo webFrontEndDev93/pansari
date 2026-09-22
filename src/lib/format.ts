@@ -56,7 +56,7 @@ export function formatDate(iso: string) {
   });
 }
 
-/** Sep 2026 — how expiry is printed on a medicine pack. */
+/** Sep 2026 — how an expiry date is printed on a packet. */
 export function formatMonthYear(iso: string) {
   if (!iso) return '—';
   return new Date(`${iso}T00:00:00`).toLocaleDateString('en-PK', { month: 'short', year: 'numeric' });

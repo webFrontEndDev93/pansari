@@ -4,6 +4,7 @@ import { useStore } from '../lib/store';
 import { money, todayISO } from '../lib/format';
 import type { Batch, Product } from '../lib/types';
 import { Button, Field, Modal } from './ui';
+import { formatQty, isWeighed, unitOf } from '../lib/units';
 
 export function BatchForm({
   product, batch, onClose,
@@ -38,12 +39,16 @@ export function BatchForm({
     return Math.round(((sale - cost) / sale) * 1000) / 10;
   }, [draft.salePrice, draft.costPrice]);
 
+  const weighed = isWeighed(product.unit);
+  const spec = unitOf(product.unit);
+  const mrp = Number(draft.mrp) || 0;
+
+  // Only the price is genuinely required. A sack of atta has no batch number,
+  // no expiry and no printed MRP, and demanding them would just teach the
+  // shopkeeper to type something untrue into three boxes.
   const invalid =
-    !draft.batchNo?.trim() ||
-    !draft.expiry ||
-    !(Number(draft.mrp) > 0) ||
     !(Number(draft.salePrice) > 0) ||
-    Number(draft.salePrice) > Number(draft.mrp);
+    (mrp > 0 && Number(draft.salePrice) > mrp);
 
   const save = async () => {
     setSaving(true);
@@ -51,11 +56,11 @@ export function BatchForm({
       if (batch) {
         const updated = await api.updateBatch(batch.id, draft);
         setBatches((current) => current.map((b) => (b.id === updated.id ? updated : b)));
-        notify('success', 'Batch updated', `${product.name} · ${updated.batchNo}`);
+        notify('success', 'Stock lot updated', `${product.name}${updated.batchNo ? ` · ${updated.batchNo}` : ''}`);
       } else {
         const created = await api.createBatch({ ...draft, productId: product.id });
         setBatches((current) => [...current, created]);
-        notify('success', 'Stock received', `${created.quantity} × ${product.name} (${created.batchNo})`);
+        notify('success', 'Stock received', `${formatQty(created.quantity, product.unit)} of ${product.name}`);
       }
       onClose();
     } catch (error) {
@@ -67,30 +72,33 @@ export function BatchForm({
 
   return (
     <Modal
-      title={batch ? `Edit batch ${batch.batchNo}` : `Receive stock — ${product.name}`}
-      subtitle="MRP and sale price include sales tax, exactly as printed on the pack."
+      title={batch ? `Edit stock lot — ${product.name}` : `Receive stock — ${product.name}`}
+      subtitle={weighed
+        ? `Sold by weight. The price is per ${spec.short}, and includes sales tax.`
+        : 'Prices include sales tax, exactly as printed on the packet.'}
       width="38rem"
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={save} disabled={invalid || saving}>
-            {saving ? 'Saving…' : batch ? 'Save batch' : 'Add to stock'}
+            {saving ? 'Saving…' : batch ? 'Save lot' : 'Add to stock'}
           </Button>
         </>
       }
     >
       <div className="form-grid">
-        <Field label="Batch number">
+        <Field label="Batch number" hint="Optional — loose goods have none.">
           <input
             className="input mono"
             value={draft.batchNo ?? ''}
             onChange={(e) => set('batchNo', e.target.value.toUpperCase())}
-            placeholder="PAN2417"
+            placeholder={weighed ? '' : 'TAP2417'}
           />
         </Field>
         <Field
           label="Expiry date"
+          hint="Optional — leave blank if the item has none."
           error={draft.expiry && draft.expiry < todayISO() ? 'This date has already passed.' : undefined}
         >
           <input
@@ -100,7 +108,7 @@ export function BatchForm({
             onChange={(e) => set('expiry', e.target.value)}
           />
         </Field>
-        <Field label="Printed MRP">
+        <Field label="Printed MRP" hint="Optional — loose goods have no printed price.">
           <input
             className="input input--num"
             type="number"
@@ -111,9 +119,9 @@ export function BatchForm({
           />
         </Field>
         <Field
-          label="Sale price"
-          error={Number(draft.salePrice) > Number(draft.mrp) ? 'Cannot be more than the MRP.' : undefined}
-          hint="Leave equal to MRP if you do not discount."
+          label={weighed ? `Sale price per ${spec.short}` : 'Sale price'}
+          error={mrp > 0 && Number(draft.salePrice) > mrp ? 'Cannot be more than the MRP.' : undefined}
+          hint={weighed ? 'What one kilo or litre sells for.' : 'Leave equal to MRP if you do not discount.'}
         >
           <input
             className="input input--num"
@@ -124,7 +132,10 @@ export function BatchForm({
             onChange={(e) => set('salePrice', Number(e.target.value))}
           />
         </Field>
-        <Field label="Purchase cost" hint={margin === null ? 'Used for profit reporting.' : `Margin: ${margin}%`}>
+        <Field
+          label={weighed ? `Purchase cost per ${spec.short}` : 'Purchase cost'}
+          hint={margin === null ? 'Used for profit reporting.' : `Margin: ${margin}%`}
+        >
           <input
             className="input input--num"
             type="number"
@@ -134,11 +145,17 @@ export function BatchForm({
             onChange={(e) => set('costPrice', Number(e.target.value))}
           />
         </Field>
-        <Field label="Quantity">
+        <Field
+          label={weighed ? `Weight received (${spec.short})` : 'Quantity'}
+          hint={weighed ? 'Decimals are fine — 12.5 kg is an ordinary reading.' : undefined}
+        >
           <input
             className="input input--num"
             type="number"
             min={0}
+            // Weighed stock is fractional, so the field has to accept a
+            // fraction. Stepping by whole units would round the sack.
+            step={weighed ? 0.001 : 1}
             value={draft.quantity ?? 0}
             onChange={(e) => set('quantity', Number(e.target.value))}
           />
@@ -148,7 +165,7 @@ export function BatchForm({
             className="input"
             value={draft.supplier ?? ''}
             onChange={(e) => set('supplier', e.target.value)}
-            placeholder="Muller &amp; Phipps Pakistan"
+            placeholder="Akbari Mandi"
           />
         </Field>
         <Field label="Received on">
